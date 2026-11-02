@@ -7,7 +7,10 @@ authors = [
     { name = "mmstewart", email = "mmsstewart20@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "google-genai>=2.34.0",
+    "python-dotenv>=1.2.4",
+]
 
 [project.scripts]
 ai-playground = "ai_playground:main"
