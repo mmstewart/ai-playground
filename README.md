@@ -151,7 +151,7 @@ ai-playground/
 │   ├── test_clean_text.py
 │   ├── test_llm.py
 │   └── test_main.py
-├── .env                          # your API key (not committed)
+├── .env
 ├── pyproject.toml
 └── uv.lock
 ```
