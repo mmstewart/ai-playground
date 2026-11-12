@@ -6,8 +6,9 @@
 
 A Python command-line tool for learning AI engineering, starting with the fundamentals: packaging, typing, testing, and
 CI. It works with Google's Gemini API in three modes: summarizing pasted text in five or fewer bullet points, returning
-a structured summary as validated JSON, or holding a multi-turn chat that remembers earlier messages. It will grow into
-experiments with async requests, retrieval (RAG), and evals.
+a structured summary as validated JSON, or holding a multi-turn chat that remembers earlier messages. It also includes a
+benchmark comparing sequential and concurrent (async) requests, and will grow into experiments with retrieval (RAG) and
+evals.
 
 ## Features
 
@@ -29,6 +30,8 @@ experiments with async requests, retrieval (RAG), and evals.
   continues.
 - **Clean output streams:** only Gemini's responses go to stdout; prompts, status messages, and errors go to stderr, so
   output can be redirected to a file or piped into other tools.
+- **Async requests:** `ask_gemini_async` uses the SDK's async client, so many requests can run at once with
+  `asyncio.gather`. A benchmark script measures the difference.
 - **Testable design:** the Gemini client is created once and passed in (dependency injection), so tests use mocks and
   never call the real API.
 - **Code quality in CI:** pytest, Ruff (lint and formatting), and Pyright (type checking) run on every push.
@@ -122,10 +125,34 @@ press `Ctrl+D`, to end the chat.
 | `2`   | Invalid or conflicting command-line options                                                           |
 | `130` | Cancelled with `Ctrl+C`                                                                               |
 
+## Benchmark: sequential vs. concurrent requests
+
+`scripts/benchmark.py` sends the same 10 summarization requests either one at a time or all at once with
+`asyncio.gather`:
+
+```bash
+uv run python scripts/benchmark.py --mode sequential
+uv run python scripts/benchmark.py --mode concurrent
+```
+
+Results on Gemini Flash-Lite (free tier):
+
+| Mode       | 10 requests              |
+| ---------- | ------------------------ |
+| Sequential | ~6.4 s                   |
+| Concurrent | ~1.2 s (about 5x faster) |
+
+Sequential time grows with every request, while concurrent time stays close to the slowest single request. Concurrent
+runs use `return_exceptions=True`, so one failed request is reported without losing the other results.
+
+The free tier allows 15 requests per minute per model, so run each mode separately and wait about a minute between runs.
+Sending both modes back to back (20 requests) triggers 429 rate-limit errors, and the retries make the concurrent time
+look slower than it is.
+
 ## Development
 
 ```bash
-uv run pytest -v          # tests
+uv run pytest -v          # tests (async tests use pytest-asyncio)
 uv run ruff check         # lint
 uv run ruff format        # format code
 uv run pyright            # type check
@@ -142,16 +169,18 @@ ai-playground/
 │   ├── tests.yml                 # pytest
 │   ├── lint.yml                  # Ruff lint and format check
 │   └── typecheck.yml             # Pyright
+├── scripts/
+│   └── benchmark.py              # sequential vs. concurrent timing
 ├── src/ai_playground/
 │   ├── __init__.py               # CLI: arguments, input, summary, JSON, and chat modes
 │   ├── clean_text.py             # text cleaning
-│   ├── llm.py                    # Gemini client, instructions, summary, structured, and chat calls
+│   ├── llm.py                    # Gemini client, instructions, summary, async, structured, and chat calls
 │   └── schemas.py                # Pydantic models for structured output
 ├── tests/
 │   ├── test_clean_text.py
 │   ├── test_llm.py
 │   └── test_main.py
-├── .env
+├── .env                          # your API key (not committed)
 ├── pyproject.toml
 └── uv.lock
 ```
@@ -164,7 +193,7 @@ ai-playground/
 - [x] Multi-turn chat
 - [x] Linting, formatting, and type checking in CI
 - [x] Structured JSON output validated with Pydantic
-- [ ] Async requests
+- [x] Async requests
 - [ ] FastAPI endpoint for text extraction
 - [ ] Retrieval-augmented generation (RAG) with pgvector
 - [ ] Evals for answer quality

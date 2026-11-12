@@ -46,6 +46,9 @@ def create_chat_session(client: genai.Client) -> Chat:
 
 
 def ask_gemini(client: genai.Client, prompt: str) -> str:
+    if not prompt.strip():
+        raise ValueError("Prompt is empty.")
+
     response = client.models.generate_content(
         model=MODEL,
         contents=prompt,
@@ -62,7 +65,30 @@ def ask_gemini(client: genai.Client, prompt: str) -> str:
     return text
 
 
+async def ask_gemini_async(client: genai.Client, prompt: str) -> str:
+    if not prompt.strip():
+        raise ValueError("Prompt is empty.")
+
+    response = await client.aio.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=SUMMARY_CONFIG,
+    )
+
+    text = response.text
+
+    if not text:
+        raise ValueError(
+            "Gemini returned an empty response or the content was blocked."
+        )
+
+    return text
+
+
 def ask_gemini_stream(client: genai.Client, prompt: str) -> Iterator[str]:
+    if not prompt.strip():
+        raise ValueError("Prompt is empty.")
+
     response = client.models.generate_content_stream(
         model=MODEL,
         contents=prompt,
@@ -85,6 +111,9 @@ def ask_gemini_stream(client: genai.Client, prompt: str) -> Iterator[str]:
 def get_structured[T: BaseModel](
     client: genai.Client, prompt: str, schema: type[T]
 ) -> T:
+    if not prompt.strip():
+        raise ValueError("Prompt is empty.")
+
     response = client.models.generate_content(
         model=MODEL,
         contents=prompt,

@@ -1,6 +1,7 @@
+import asyncio
 import json
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,7 @@ from ai_playground.llm import (
     MODEL,
     SUMMARY_SYSTEM_INSTRUCTION,
     ask_gemini,
+    ask_gemini_async,
     ask_gemini_stream,
     create_chat_session,
     create_client,
@@ -313,3 +315,170 @@ def test_get_structured_api_failure_propagates_exception(mock_client):
 
     with pytest.raises(Exception, match="API Key Invalid"):
         get_structured(mock_client, "Some text", Summary)
+
+
+# ==========================================
+# ask_gemini_async()
+#
+# These tests need pytest-asyncio (uv add --dev pytest-asyncio).
+# The async client lives at client.aio, and its generate_content is
+# awaited, so it's faked with AsyncMock instead of MagicMock.
+# ==========================================
+@pytest.fixture
+def mock_async_client() -> MagicMock:
+    """A fake genai.Client whose aio.models.generate_content can be awaited."""
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock()
+    return client
+
+
+@pytest.mark.asyncio
+async def test_ask_gemini_async_success(mock_async_client):
+    """Returns the response text and uses the summary instruction."""
+    mock_async_client.aio.models.generate_content.return_value.text = "Hello there!"
+
+    result = await ask_gemini_async(mock_async_client, "Say hello")
+
+    assert result == "Hello there!"
+
+    mock_async_client.aio.models.generate_content.assert_awaited_once()
+    kwargs = mock_async_client.aio.models.generate_content.call_args.kwargs
+    assert kwargs["model"] == MODEL
+    assert kwargs["contents"] == "Say hello"
+    assert kwargs["config"].system_instruction == SUMMARY_SYSTEM_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_ask_gemini_async_does_not_use_sync_client(mock_async_client):
+    """The async version must call client.aio, or the requests won't run concurrently."""
+    mock_async_client.aio.models.generate_content.return_value.text = "Hi"
+
+    await ask_gemini_async(mock_async_client, "Say hello")
+
+    mock_async_client.models.generate_content.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("empty_value", ["", None])
+async def test_ask_gemini_async_empty_response_raises_value_error(
+    mock_async_client, empty_value
+):
+    mock_async_client.aio.models.generate_content.return_value.text = empty_value
+
+    with pytest.raises(ValueError, match=re.escape(EMPTY_RESPONSE_MESSAGE)):
+        await ask_gemini_async(mock_async_client, "This will return nothing")
+
+
+@pytest.mark.asyncio
+async def test_ask_gemini_async_api_failure_propagates_exception(mock_async_client):
+    mock_async_client.aio.models.generate_content.side_effect = Exception(
+        "API Key Invalid"
+    )
+
+    with pytest.raises(Exception, match="API Key Invalid"):
+        await ask_gemini_async(mock_async_client, "Testing error propagation")
+
+
+@pytest.mark.asyncio
+async def test_ask_gemini_async_runs_concurrently_with_gather(mock_async_client):
+    """Several calls can run together with asyncio.gather, results in order."""
+    replies = iter(["first", "second", "third"])
+
+    async def fake_generate_content(**kwargs):
+        response = MagicMock()
+        response.text = next(replies)
+        return response
+
+    mock_async_client.aio.models.generate_content.side_effect = fake_generate_content
+
+    results = await asyncio.gather(
+        *(ask_gemini_async(mock_async_client, prompt) for prompt in ["a", "b", "c"])
+    )
+
+    assert results == ["first", "second", "third"]
+    assert mock_async_client.aio.models.generate_content.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_gather_return_exceptions_keeps_other_results(mock_async_client):
+    """With return_exceptions=True, one failure doesn't lose the other results."""
+    outcomes = iter(["ok 1", None, "ok 3"])
+
+    async def fake_generate_content(**kwargs):
+        response = MagicMock()
+        response.text = next(outcomes)
+        return response
+
+    mock_async_client.aio.models.generate_content.side_effect = fake_generate_content
+
+    results = await asyncio.gather(
+        *(ask_gemini_async(mock_async_client, prompt) for prompt in ["a", "b", "c"]),
+        return_exceptions=True,
+    )
+
+    assert results[0] == "ok 1"
+    assert isinstance(results[1], ValueError)
+    assert results[2] == "ok 3"
+
+
+# ==========================================
+# Empty prompt guard
+#
+# Every call rejects an empty or whitespace-only prompt before
+# contacting the API, so no request is wasted.
+# ==========================================
+EMPTY_PROMPTS = ["", "   ", "\n\t\n"]
+EMPTY_PROMPT_IDS = ["empty", "spaces", "whitespace"]
+
+
+@pytest.mark.parametrize("prompt", EMPTY_PROMPTS, ids=EMPTY_PROMPT_IDS)
+def test_ask_gemini_rejects_empty_prompt(mock_client, prompt):
+    with pytest.raises(ValueError, match="Prompt is empty"):
+        ask_gemini(mock_client, prompt)
+
+    mock_client.models.generate_content.assert_not_called()
+
+
+@pytest.mark.parametrize("prompt", EMPTY_PROMPTS, ids=EMPTY_PROMPT_IDS)
+def test_ask_gemini_stream_rejects_empty_prompt(mock_client, prompt):
+    """Consumed with list(...), since a generator only runs when looped over."""
+    with pytest.raises(ValueError, match="Prompt is empty"):
+        list(ask_gemini_stream(mock_client, prompt))
+
+    mock_client.models.generate_content_stream.assert_not_called()
+
+
+@pytest.mark.parametrize("prompt", EMPTY_PROMPTS, ids=EMPTY_PROMPT_IDS)
+def test_get_structured_rejects_empty_prompt(mock_client, prompt):
+    with pytest.raises(ValueError, match="Prompt is empty"):
+        get_structured(mock_client, prompt, Summary)
+
+    mock_client.models.generate_content.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt", EMPTY_PROMPTS, ids=EMPTY_PROMPT_IDS)
+async def test_ask_gemini_async_rejects_empty_prompt(mock_async_client, prompt):
+    with pytest.raises(ValueError, match="Prompt is empty"):
+        await ask_gemini_async(mock_async_client, prompt)
+
+    mock_async_client.aio.models.generate_content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gather_reports_empty_prompt_without_losing_other_results(
+    mock_async_client,
+):
+    """Mirrors the benchmark: one empty prompt fails, the rest still succeed."""
+    mock_async_client.aio.models.generate_content.return_value.text = "Summary"
+
+    results = await asyncio.gather(
+        *(ask_gemini_async(mock_async_client, prompt) for prompt in ["a", "", "c"]),
+        return_exceptions=True,
+    )
+
+    assert results[0] == "Summary"
+    assert isinstance(results[1], ValueError)
+    assert str(results[1]) == "Prompt is empty."
+    assert results[2] == "Summary"
+    assert mock_async_client.aio.models.generate_content.await_count == 2
