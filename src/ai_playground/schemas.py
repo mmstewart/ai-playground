@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ActionItem(BaseModel):
@@ -33,4 +33,14 @@ class Summary(BaseModel):
     )
     sentiment: Literal["positive", "neutral", "negative"] = Field(
         description="The overall sentiment of the text."
+    )
+
+
+class TextRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    text: str = Field(
+        min_length=10,
+        max_length=10_000,
+        description="The text to be summarized.",
     )

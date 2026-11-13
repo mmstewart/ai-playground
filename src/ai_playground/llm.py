@@ -5,6 +5,15 @@ from google.genai import types
 from google.genai.chats import Chat
 from pydantic import BaseModel
 
+
+class EmptyPromptError(ValueError):
+    """The prompt was empty or only whitespace."""
+
+
+class EmptyResponseError(ValueError):
+    """Gemini returned no text, or the content was blocked."""
+
+
 MODEL = "gemini-3.5-flash-lite"
 
 HTTP_OPTIONS = types.HttpOptions(
@@ -47,7 +56,7 @@ def create_chat_session(client: genai.Client) -> Chat:
 
 def ask_gemini(client: genai.Client, prompt: str) -> str:
     if not prompt.strip():
-        raise ValueError("Prompt is empty.")
+        raise EmptyPromptError("Prompt is empty.")
 
     response = client.models.generate_content(
         model=MODEL,
@@ -58,7 +67,7 @@ def ask_gemini(client: genai.Client, prompt: str) -> str:
     text = response.text
 
     if not text:
-        raise ValueError(
+        raise EmptyResponseError(
             "Gemini returned an empty response or the content was blocked."
         )
 
@@ -67,7 +76,7 @@ def ask_gemini(client: genai.Client, prompt: str) -> str:
 
 async def ask_gemini_async(client: genai.Client, prompt: str) -> str:
     if not prompt.strip():
-        raise ValueError("Prompt is empty.")
+        raise EmptyPromptError("Prompt is empty.")
 
     response = await client.aio.models.generate_content(
         model=MODEL,
@@ -78,7 +87,7 @@ async def ask_gemini_async(client: genai.Client, prompt: str) -> str:
     text = response.text
 
     if not text:
-        raise ValueError(
+        raise EmptyResponseError(
             "Gemini returned an empty response or the content was blocked."
         )
 
@@ -87,7 +96,7 @@ async def ask_gemini_async(client: genai.Client, prompt: str) -> str:
 
 def ask_gemini_stream(client: genai.Client, prompt: str) -> Iterator[str]:
     if not prompt.strip():
-        raise ValueError("Prompt is empty.")
+        raise EmptyPromptError("Prompt is empty.")
 
     response = client.models.generate_content_stream(
         model=MODEL,
@@ -103,7 +112,7 @@ def ask_gemini_stream(client: genai.Client, prompt: str) -> Iterator[str]:
             yield chunk.text
 
     if not received_text:
-        raise ValueError(
+        raise EmptyResponseError(
             "Gemini returned an empty response or the content was blocked."
         )
 
@@ -112,7 +121,7 @@ def get_structured[T: BaseModel](
     client: genai.Client, prompt: str, schema: type[T]
 ) -> T:
     if not prompt.strip():
-        raise ValueError("Prompt is empty.")
+        raise EmptyPromptError("Prompt is empty.")
 
     response = client.models.generate_content(
         model=MODEL,
@@ -126,7 +135,32 @@ def get_structured[T: BaseModel](
     text = response.text
 
     if not text:
-        raise ValueError(
+        raise EmptyResponseError(
+            "Gemini returned an empty response or the content was blocked."
+        )
+
+    return schema.model_validate_json(text)
+
+
+async def get_structured_async[T: BaseModel](
+    client: genai.Client, prompt: str, schema: type[T]
+) -> T:
+    if not prompt.strip():
+        raise EmptyPromptError("Prompt is empty.")
+
+    response = await client.aio.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_json_schema=schema.model_json_schema(),
+        ),
+    )
+
+    text = response.text
+
+    if not text:
+        raise EmptyResponseError(
             "Gemini returned an empty response or the content was blocked."
         )
 
@@ -144,6 +178,6 @@ def send_chat_message(chat: Chat, prompt: str) -> Iterator[str]:
             yield chunk.text
 
     if not received_text:
-        raise ValueError(
+        raise EmptyResponseError(
             "Gemini returned an empty response or the content was blocked."
         )

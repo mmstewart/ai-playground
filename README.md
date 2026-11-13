@@ -6,9 +6,9 @@
 
 A Python command-line tool for learning AI engineering, starting with the fundamentals: packaging, typing, testing, and
 CI. It works with Google's Gemini API in three modes: summarizing pasted text in five or fewer bullet points, returning
-a structured summary as validated JSON, or holding a multi-turn chat that remembers earlier messages. It also includes a
-benchmark comparing sequential and concurrent (async) requests, and will grow into experiments with retrieval (RAG) and
-evals.
+a structured summary as validated JSON, or holding a multi-turn chat that remembers earlier messages. It also serves
+structured summaries and meeting notes over an async FastAPI web API, includes a benchmark comparing sequential and
+concurrent requests, and will grow into experiments with retrieval (RAG) and evals.
 
 ## Features
 
@@ -32,6 +32,8 @@ evals.
   output can be redirected to a file or piped into other tools.
 - **Async requests:** `ask_gemini_async` uses the SDK's async client, so many requests can run at once with
   `asyncio.gather`. A benchmark script measures the difference.
+- **Web API:** an async FastAPI app with `POST /summarize` and `POST /meeting-notes`, request validation, one shared
+  Gemini client, and error handlers that map each failure to the right HTTP status code.
 - **Testable design:** the Gemini client is created once and passed in (dependency injection), so tests use mocks and
   never call the real API.
 - **Code quality in CI:** pytest, Ruff (lint and formatting), and Pyright (type checking) run on every push.
@@ -125,6 +127,66 @@ press `Ctrl+D`, to end the chat.
 | `2`   | Invalid or conflicting command-line options                                                           |
 | `130` | Cancelled with `Ctrl+C`                                                                               |
 
+## Web API
+
+Start the development server:
+
+```bash
+uv run fastapi dev src/ai_playground/api.py
+```
+
+Interactive docs are at http://127.0.0.1:8000/docs, where you can try each endpoint in the browser.
+
+### Endpoints
+
+| Method | Path             | Returns                                                                              |
+| ------ | ---------------- | ------------------------------------------------------------------------------------ |
+| `GET`  | `/health`        | `{"status": "ok"}`                                                                   |
+| `POST` | `/summarize`     | A `Summary`: title, up to five key points, and sentiment                             |
+| `POST` | `/meeting-notes` | `MeetingNotes`: decisions, risks grouped by department, and action items with owners |
+
+Both `POST` endpoints take the same body. Text is trimmed and must be 10–10,000 characters:
+
+```bash
+curl -X POST http://127.0.0.1:8000/summarize \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The team met to plan the next release and agreed on the scope."}'
+```
+
+```json
+{
+	"title": "Release Planning",
+	"key_points": ["The team agreed on the release scope."],
+	"sentiment": "positive"
+}
+```
+
+`/meeting-notes` returns nested data:
+
+```json
+{
+	"title": "Fitness App Sprint Meeting",
+	"decisions": ["Approved the UI redesign for the workout tracking dashboard."],
+	"risks": [{ "department": "Engineering", "risks": ["API rate limits for third-party wearable integrations."] }],
+	"action_items": [{ "task": "Finalize wireframes for the new profile settings page.", "owner": "Sarah" }]
+}
+```
+
+### Status codes
+
+| Code  | Meaning                                                                                 |
+| ----- | --------------------------------------------------------------------------------------- |
+| `200` | Success                                                                                 |
+| `400` | The prompt was empty                                                                    |
+| `422` | Invalid request body (missing, too short, too long, or not text)                        |
+| `429` | Rate limited by the AI provider; try again shortly                                      |
+| `502` | The AI provider failed, returned nothing, or returned data that didn't match the schema |
+
+Upstream error details are not passed back to the caller.
+
+The Gemini client is created once when the server starts (FastAPI lifespan), closed on shutdown, and given to each route
+through `Depends`, so tests can swap in a mock.
+
 ## Benchmark: sequential vs. concurrent requests
 
 `scripts/benchmark.py` sends the same 10 summarization requests either one at a time or all at once with
@@ -158,8 +220,9 @@ uv run ruff format        # format code
 uv run pyright            # type check
 ```
 
-Tests mock the Gemini client and chat session, so they run without an API key or network access. All checks run
-automatically on every push and pull request through GitHub Actions.
+Tests mock the Gemini client and chat session, and the API tests inject the mock with `dependency_overrides`, so
+everything runs without an API key or network access. All checks run automatically on every push and pull request
+through GitHub Actions.
 
 ## Project structure
 
@@ -173,11 +236,13 @@ ai-playground/
 │   └── benchmark.py              # sequential vs. concurrent timing
 ├── src/ai_playground/
 │   ├── __init__.py               # CLI: arguments, input, summary, JSON, and chat modes
+│   ├── api.py                    # FastAPI app: endpoints, lifespan, error handlers
 │   ├── clean_text.py             # text cleaning
 │   ├── llm.py                    # Gemini client, instructions, summary, async, structured, and chat calls
-│   └── schemas.py                # Pydantic models for structured output
+│   └── schemas.py                # Pydantic models: TextRequest, Summary, MeetingNotes
 ├── tests/
 │   ├── test_clean_text.py
+│   ├── test_api.py
 │   ├── test_llm.py
 │   └── test_main.py
 ├── .env                          # your API key (not committed)
@@ -194,6 +259,7 @@ ai-playground/
 - [x] Linting, formatting, and type checking in CI
 - [x] Structured JSON output validated with Pydantic
 - [x] Async requests
-- [ ] FastAPI endpoint for text extraction
+- [x] FastAPI endpoints for summaries and meeting notes
+- [ ] Job posting extraction endpoint (week 3 mini-build)
 - [ ] Retrieval-augmented generation (RAG) with pgvector
 - [ ] Evals for answer quality
